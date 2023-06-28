@@ -2,8 +2,8 @@ import h5py
 import numpy as np
 import tensorflow as tf
 from tqdm.autonotebook import tqdm
+import os
 from tensorflow.io import FixedLenFeature, parse_single_example
-
 
 all_data = ['/content/drive/Shareddrives/ELEC 494 - Ω2Ω/Data/camera/2016-01-30--11-24-51.h5', # 8 GB xx
             '/content/drive/Shareddrives/ELEC 494 - Ω2Ω/Data/camera/2016-01-30--13-46-00.h5', # 9 GB xx
@@ -55,68 +55,78 @@ def serialize_example(example):
         example_proto = tf.train.Example(features=tf.train.Features(feature=dset_item))
     return example_proto.SerializeToString()
 
-for data_file, label_file in list(zip(all_data, all_labels))[3:]:
+def makeTFRecord(all_data, all_labels):
 
-  print('Currently on: ', data_file)
-  # Open Files
-  h5_file = h5py.File(data_file, 'r')
-  h5_labels = h5py.File(label_file, 'r')
+    """
+    Convert .h5 files to TFRecord files
 
-  # Extract Data
-  mydata = h5_file['X'] # uint8 -> _bytes_feature
-  speed_labels = np.array(h5_labels['speed']) # float64 -> _float_feature
-  angle_labels = np.array(h5_labels['steering_angle']) # float64 -> _float_feature
-  gear_labels = np.array(h5_labels['gear_choice']) # float64 -> _float_feature
+    """
 
-  # Get acceleration
-  speed_shifted = np.roll(speed_labels, 1)
-  speed_shifted[0] = 0
-  acc_labels = (speed_labels - speed_shifted)/0.05 # float64 -> _float_feature
+    for data_file, label_file in list(zip(all_data, all_labels)):
 
-  print('Previous Lengths')
-  print(speed_labels.shape[0])
+        print('Currently on: ', data_file)
+        # Open Files
+        h5_file = h5py.File(data_file, 'r')
+        h5_labels = h5py.File(label_file, 'r')
 
-  assert speed_labels.shape[0] == angle_labels.shape[0] == gear_labels.shape[0] == acc_labels.shape[0], f'File {label_file} has components with different shapes'
-  # Sample
-  idxs = np.linspace(0, speed_labels.shape[0] - 1, mydata.shape[0]).astype("int")
-  speed_labels = speed_labels[idxs]
-  angle_labels = angle_labels[idxs]
-  gear_labels = gear_labels[idxs]
-  acc_labels = acc_labels[idxs]
+        # Extract Data
+        mydata = h5_file['X'] # uint8 -> _bytes_feature
+        speed_labels = np.array(h5_labels['speed']) # float64 -> _float_feature
+        angle_labels = np.array(h5_labels['steering_angle']) # float64 -> _float_feature
+        gear_labels = np.array(h5_labels['gear_choice']) # float64 -> _float_feature
 
-  print('New Lengths')
-  print(speed_labels.shape[0])
+        # Get acceleration
+        speed_shifted = np.roll(speed_labels, 1)
+        speed_shifted[0] = 0
+        acc_labels = (speed_labels - speed_shifted)/0.05 # float64 -> _float_feature
 
-  # Number of items
-  assert speed_labels.shape[0] == angle_labels.shape[0] == gear_labels.shape[0] == acc_labels.shape[0]
-  num_of_items = mydata.shape[0]
-  # Write TFRecords
-  print('Writing TFRecords File')
-  with tf.io.TFRecordWriter(str(data_file.replace('camera', 'TFRecords/Data_2').replace('.h5', '.tfrecord'))) as writer:
+        print('Previous Lengths')
+        print(speed_labels.shape[0])
 
-      for row in tqdm(range(num_of_items)):
+        assert speed_labels.shape[0] == angle_labels.shape[0] == gear_labels.shape[0] == acc_labels.shape[0], f'File {label_file} has components with different shapes'
+        # Sample
+        idxs = np.linspace(0, speed_labels.shape[0] - 1, mydata.shape[0]).astype("int")
+        speed_labels = speed_labels[idxs]
+        angle_labels = angle_labels[idxs]
+        gear_labels = gear_labels[idxs]
+        acc_labels = acc_labels[idxs]
 
-        gear = gear_labels[row]
-        if gear == 0 or gear == 10: # Reversing or Parked
-          continue
-        speed = speed_labels[row]
-        angle = angle_labels[row]        
-        acc = acc_labels[row]
-        img = mydata[row]
-        img_resized = tf.image.resize(np.moveaxis(img, 0, -1), [100, 100]).numpy().astype('uint8')
-        assert len(img_resized.shape) == 3, 'Should have 3D img'
+        print('New Lengths')
+        print(speed_labels.shape[0])
 
-        fields = {
-            'X': {'data': img_resized.flatten().tobytes(), '_type': _bytes_feature},
-            'speed': {'data': speed, '_type': _float_feature}, 
-            'steering_angle': {'data': angle, '_type': _float_feature},
-            'acceleration': {'data': acc, '_type': _float_feature}
-            }
+        # Number of items
+        assert speed_labels.shape[0] == angle_labels.shape[0] == gear_labels.shape[0] == acc_labels.shape[0]
+        num_of_items = mydata.shape[0]
+        # Write TFRecords
+        print('Writing TFRecords File')
 
-        example = serialize_example(fields)
-        writer.write(example)
-  h5_file.close()
-  h5_labels.close()
-  
+        # Make data directory
+        filepath = os.path.dirname(data_file.replace('camera', 'TFRecords/Data'))
+        if not os.path.isdir(filepath):
+            os.makedirs(filepath)
 
+        with tf.io.TFRecordWriter(str(filepath.replace('.h5', '.tfrecord'))) as writer:
 
+            for row in tqdm(range(num_of_items)):
+
+                gear = gear_labels[row]
+                if gear == 0 or gear == 10: # Reversing or Parked
+                    continue
+                speed = speed_labels[row]
+                angle = angle_labels[row]        
+                acc = acc_labels[row]
+                img = mydata[row]
+                img_resized = tf.image.resize(np.moveaxis(img, 0, -1), [100, 100]).numpy().astype('uint8')
+                assert len(img_resized.shape) == 3, 'Should have 3D img'
+
+                fields = {
+                    'X': {'data': img_resized.flatten().tobytes(), '_type': _bytes_feature},
+                    'speed': {'data': speed, '_type': _float_feature}, 
+                    'steering_angle': {'data': angle, '_type': _float_feature},
+                    'acceleration': {'data': acc, '_type': _float_feature}
+                    }
+
+                example = serialize_example(fields)
+                writer.write(example)
+        h5_file.close()
+        h5_labels.close()
